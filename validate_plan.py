@@ -40,7 +40,9 @@ plan.json: the draft plan.
                                          # wait for the merged plan (see merge_plans.py)
   "people": ["PersonA", "PersonB"],
   "quick_dinner_requested_days": [],     # one-off quick days for THIS plan only.
-                                         # default_quick_dinner_days come from params.
+                                         # default_quick_dinner_days come from params. Quick days
+                                         # apply only to dinners eaten by someone in
+                                         # quick_dinner_people (a shared dinner counts).
   "restaurant_lunch_requested_days": [], # one-off restaurant lunches the user asked for
   "days": [
     {
@@ -130,7 +132,7 @@ import re
 import sys
 from datetime import date, timedelta
 
-VERSION = "2.7.0"
+VERSION = "2.8.0"
 
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 MAIN_SLOTS = ("Breakfast", "Lunch", "Dinner")
@@ -157,6 +159,7 @@ SCRIPT_SCHEMA = {
     "simple_prep_hands_on_max_minutes": "int",
     "simple_prep_raw_total_max_minutes": "int",
     "flavor_variety_people": "people",
+    "quick_dinner_people": "people",
     "protein_shake_recipe_name": "text",
 }
 PERSON_KEYS = {
@@ -448,7 +451,9 @@ def main():
                     f"{label}: restaurant lunch on {dname} was not requested (restaurant_lunch_days / "
                     "restaurant_lunch_requested_days)."
                 )
-            if slot == "Dinner" and src == "restaurant" and dname in quick_days:
+            needs_quick = (slot == "Dinner" and dname in quick_days
+                           and any(p in P["quick_dinner_people"] for p in eaters))
+            if needs_quick and src == "restaurant":
                 violations.append(f"{label}: {dname} dinner must be a quick home meal, not a restaurant.")
 
             # --- Seafood (applies to every source) ---
@@ -642,7 +647,7 @@ def main():
                     violations.append(f"{label}: {eggs} eggs x multiplier {mult} = {total:.2f}, not a whole number.")
 
             # --- Quick dinners (simple assembly counts as quick) ---
-            if slot == "Dinner" and dname in quick_days and src != "simple":
+            if needs_quick and src != "simple":
                 if rec is not None:
                     if not rec.get("quick_dinner"):
                         violations.append(f"{label}: quick dinner required on {dname} but quick_dinner is not true.")

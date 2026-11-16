@@ -23,7 +23,7 @@ PARAMS = [
     ("time_buffer_multiplier", "1.5", "Script"), ("instant_pot_max_uses_per_day", "1", "Script"),
     ("seafood_allowed_people", "James", "Script"), ("simple_assembly_people", "James", "Script"),
     ("simple_prep_people", "James", "Script"), ("simple_prep_hands_on_max_minutes", "10", "Script"),
-    ("simple_prep_raw_total_max_minutes", "30", "Script"), ("flavor_variety_people", "James", "Script"),
+    ("simple_prep_raw_total_max_minutes", "30", "Script"), ("flavor_variety_people", "James", "Script"), ("quick_dinner_people", "Jacob", "Script"),
     ("protein_shake_recipe_name", "Premier Protein Shake", "Script"),
     ("jacob_calories_target", "none", "Script"), ("jacob_calories_tolerance", "none", "Script"),
     ("jacob_protein_min", "60", "Script"), ("jacob_protein_soft_min", "none", "Script"),
@@ -521,6 +521,20 @@ def _(p):
     for d in p["days"]:
         d["meals"] = [m for m in d["meals"] if "Jacob" in m["eaters"]]
     find(p, "Quick Tofu Stir Fry").update(eaters=["Jacob", "James"], servings_consumed={"Jacob": 1, "James": 1})
+    return p, None
+
+
+@case("a solo dinner for someone outside quick_dinner_people is not held to the quick rule", 0, "PASSED")
+def _(p):
+    find(p, "Garlic herb salmon").update(source="new_web", raw_total_minutes=45, raw_prep_minutes=8)
+    return p, params({"simple_prep_raw_total_max_minutes": "60"})
+
+
+@case("a shared dinner on a quick day is held to the quick rule", 1, "quick dinner required on Monday")
+def _(p):
+    m = find(p, "Quick Tofu Stir Fry")
+    m.update(recipe_id=2, name="Bean Bowl", eaters=["Jacob", "James"], servings_consumed={"Jacob": 1, "James": 1})
+    meals(p)[:] = [x for x in meals(p) if x["name"] != "Garlic herb salmon"]
     return p, None
 
 
