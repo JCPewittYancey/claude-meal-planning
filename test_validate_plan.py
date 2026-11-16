@@ -19,11 +19,11 @@ PARAMS = [
     ("variety_breakfast_per_person", "2", "Script"), ("variety_lunch_per_person", "2", "Script"),
     ("variety_dinner_per_person", "3", "Script"), ("rating_exclude_at_or_below", "3", "Script"),
     ("no_breakfast_days", "Sunday", "Script"), ("restaurant_lunch_days", "Sunday", "Script"),
-    ("default_quick_dinner_days", "Monday", "Script"), ("quick_dinner_raw_max_minutes", "20", "Script"),
+    ("default_quick_dinner_days", "Monday", "Script"), 
     ("time_buffer_multiplier", "1.5", "Script"), ("instant_pot_max_uses_per_day", "1", "Script"),
     ("seafood_allowed_people", "James", "Script"), ("simple_assembly_people", "James", "Script"),
     ("simple_prep_people", "James", "Script"), ("simple_prep_hands_on_max_minutes", "10", "Script"),
-    ("simple_prep_raw_total_max_minutes", "30", "Script"),
+    ("simple_prep_raw_total_max_minutes", "30", "Script"), ("flavor_variety_people", "James", "Script"),
     ("protein_shake_recipe_name", "Premier Protein Shake", "Script"),
     ("jacob_calories_target", "none", "Script"), ("jacob_calories_tolerance", "none", "Script"),
     ("jacob_protein_min", "60", "Script"), ("jacob_protein_soft_min", "none", "Script"),
@@ -93,7 +93,34 @@ RECIPES = [
      "prep_time_minutes": None, "cook_time_minutes": None, "prep_time_minutes_raw": None, "cook_time_minutes_raw": None,
      "protein_per_serving": 30, "fiber_per_serving": 1, "calories_per_serving": 160,
      "fasting_lvl_1": True, "fasting_lvl_2": False, "fasting_lvl_3": False, "fasting_lvl_4": False, "fasting_lvl_5": False},
+    # James protein preparations (source Assembly) and a side
+    {"id": 30, "name": "Lemon pepper rockfish", "category": "Lunch/Dinner", "source": "Assembly",
+     "flavor_key": "Rockfish | Lemon Pepper",
+     "times_used": 2, "last_used": "2026-11-02", "last_used_jacob": None, "last_used_james": "2026-11-02",
+     "rating_jacob": "Untried", "rating_james": "4", "retired": False, "notes": "", "primary_appliance": "Oven",
+     "quick_dinner": True, "prep_time_minutes": 8, "cook_time_minutes": 18, "prep_time_minutes_raw": 5,
+     "cook_time_minutes_raw": 12, "protein_per_serving": 35, "fiber_per_serving": 0, "calories_per_serving": 180,
+     "fasting_lvl_1": True, "fasting_lvl_2": True, "fasting_lvl_3": False, "fasting_lvl_4": False, "fasting_lvl_5": False},
+    {"id": 31, "name": "Cajun tilapia", "category": "Lunch/Dinner", "source": "Assembly", "flavor_key": "tilapia | cajun",
+     "times_used": 0, "last_used": None, "last_used_jacob": None, "last_used_james": None,
+     "rating_jacob": "Untried", "rating_james": "Untried", "retired": False, "notes": "", "primary_appliance": "Oven",
+     "quick_dinner": True, "prep_time_minutes": 8, "cook_time_minutes": 30, "prep_time_minutes_raw": 5,
+     "cook_time_minutes_raw": 20, "protein_per_serving": 35, "fiber_per_serving": 0, "calories_per_serving": 170,
+     "fasting_lvl_1": True, "fasting_lvl_2": True, "fasting_lvl_3": False, "fasting_lvl_4": False, "fasting_lvl_5": False},
+    {"id": 40, "name": "Steam-in-bag broccoli", "category": "Side", "source": "Assembly", "flavor_key": None,
+     "times_used": 5, "last_used": "2026-11-09", "last_used_jacob": None, "last_used_james": "2026-11-09",
+     "rating_jacob": "Untried", "rating_james": "Untried", "retired": False, "notes": "Exempt from recency rule",
+     "primary_appliance": "Microwave", "quick_dinner": False, "prep_time_minutes": 0, "cook_time_minutes": 8,
+     "prep_time_minutes_raw": 0, "cook_time_minutes_raw": 5, "protein_per_serving": 3, "fiber_per_serving": 3,
+     "calories_per_serving": 35, "fasting_lvl_1": True, "fasting_lvl_2": True, "fasting_lvl_3": True,
+     "fasting_lvl_4": True, "fasting_lvl_5": True},
 ]
+
+
+for _r in RECIPES:
+    _r.setdefault("works_for_jacob", "Yes")
+    _r.setdefault("works_for_james", "Yes")
+    _r.setdefault("shared_meal_safe", "Yes")
 
 
 def meal(slot, eaters, name, source="database", rid=None, **kw):
@@ -104,8 +131,15 @@ def meal(slot, eaters, name, source="database", rid=None, **kw):
 
 
 def james_simple_dinner():
-    return meal("Dinner", ["James"], "Rockfish + broccoli + rice", "simple", contains_seafood=True,
+    return meal("Dinner", ["James"], "Garlic herb salmon", "simple", contains_seafood=True,
+                flavor_key="salmon | garlic herb", side_ids=[40],
                 nutrition_per_serving={"calories": 640, "protein": 40, "fiber": 10})
+
+
+FLAVOR_HISTORY = [
+    {"flavor_key": "rockfish | lemon pepper", "week_of": "2026-11-02", "person": "James"},
+    {"flavor_key": "tofu | teriyaki", "week_of": "2026-11-09", "person": "Both"},
+]
 
 
 def base_plan():
@@ -123,7 +157,8 @@ def base_plan():
                 meal("Breakfast", ["James"], "Yogurt Bowl", rid=10),
                 meal("Lunch", ["Jacob"], "Bean Bowl", rid=2, servings_consumed={"Jacob": 2}),
                 meal("Lunch", ["James"], "Fish Lunch (new)", "new_web", raw_prep_minutes=5, raw_total_minutes=20,
-                     contains_seafood=True, nutrition_per_serving={"calories": 450, "protein": 35, "fiber": 10}),
+                     contains_seafood=True, flavor_key="tilapia | blackened",
+                     nutrition_per_serving={"calories": 450, "protein": 35, "fiber": 10}),
                 meal("Snack", ["James"], "Premier Protein Shake", rid=20),
                 meal("Dinner", ["Jacob"], "Quick Tofu Stir Fry", rid=3),
                 james_simple_dinner(),
@@ -132,11 +167,12 @@ def base_plan():
     }
 
 
-def run(plan, prm=None):
+def run(plan, prm=None, flavor=None, recipes=None):
     with tempfile.TemporaryDirectory() as d:
         paths = []
         for name, obj in (("params", prm if prm is not None else params()), ("plan", plan),
-                          ("recipes", RECIPES), ("snacks", [])):
+                          ("recipes", RECIPES if recipes is None else recipes), ("snacks", []),
+                          ("flavor", FLAVOR_HISTORY if flavor is None else flavor)):
             p = os.path.join(d, name + ".json")
             with open(p, "w") as f:
                 json.dump(obj, f)
@@ -177,15 +213,16 @@ def _(p):
 @case("simple assembly meal for Jacob", 1, "simple assembly meal served to Jacob")
 def _(p):
     m = find(p, "Bean Bowl")
-    m.update(source="simple", recipe_id=None, nutrition_per_serving={"calories": 400, "protein": 30, "fiber": 12})
+    m.update(source="simple", recipe_id=None, side_ids=[40],
+             nutrition_per_serving={"calories": 400, "protein": 30, "fiber": 12})
     return p, None
 
 
 @case("James solo meal over raw total (DB fallback from adjusted)", 1, "min raw total (> 30)")
 def _(p):
-    m = find(p, "Rockfish + broccoli + rice")
+    m = find(p, "Garlic herb salmon")
     m.update(source="database", recipe_id=11, name="Slow Lentil Stew", contains_seafood=False,
-             nutrition_per_serving=None)
+             nutrition_per_serving=None, flavor_key="lentil | curry", side_ids=None)
     meals(p)[:] = [x for x in meals(p) if x["slot"] != "Dinner" or x["eaters"] != ["James"]] + [m]
     p["days"][0]["day"] = "Tuesday"   # avoid the quick-dinner rule masking this
     return p, None
@@ -213,6 +250,7 @@ def _(p):
         for m in d["meals"]:
             if m["slot"] == "Dinner" and m["eaters"] == ["James"]:
                 m["name"] = f"Simple dinner {i}"
+                m["flavor_key"] = f"salmon | flavor {i}"
         p["days"].append(d)
     return p, None
 
@@ -287,12 +325,215 @@ def _(p):
     return p, params({"seafood_allowed_people": "James, Bob"})
 
 
+@case("stored protein preparation is subject to recency, whatever the sides", 1, "James last had this 2026-11-02")
+def _(p):
+    find(p, "Garlic herb salmon").update(recipe_id=30, name="Lemon pepper rockfish", flavor_key=None)
+    return p, None
+
+
+@case("new protein preparation does not satisfy the new-recipe minimum", 1, "New-recipe minimum")
+def _(p):
+    m = find(p, "Fish Lunch (new)")
+    m.update(source="database", recipe_id=10, name="Yogurt Bowl", contains_seafood=False,
+             nutrition_per_serving=None, flavor_key="yogurt | vanilla")
+    find(p, "Garlic herb salmon").update(recipe_id=31, name="Cajun tilapia", flavor_key=None)
+    return p, None
+
+
+@case("simple meal pointing at a non-Assembly row", 1, "is not an Assembly row")
+def _(p):
+    find(p, "Garlic herb salmon")["recipe_id"] = 3
+    return p, None
+
+
+@case("side id that is not a Side row", 1, "is not a Side row")
+def _(p):
+    find(p, "Garlic herb salmon")["side_ids"] = [2]
+    return p, None
+
+
+@case("same protein and flavor in a sourced solo recipe is blocked", 1, "had 'rockfish | lemon pepper'")
+def _(p):
+    find(p, "Fish Lunch (new)")["flavor_key"] = "Rockfish|lemon  pepper"
+    return p, None
+
+
+@case("flavor eaten in a shared meal counts for James's solo meals", 1, "had 'tofu | teriyaki'")
+def _(p):
+    find(p, "Fish Lunch (new)").update(flavor_key="tofu | teriyaki", contains_seafood=False)
+    return p, None
+
+
+@case("same protein with a different flavor is fine", 0, "PASSED")
+def _(p):
+    find(p, "Fish Lunch (new)")["flavor_key"] = "rockfish | cajun"
+    return p, None
+
+
+@case("flavor rule does not apply to Jacob", 0, "PASSED")
+def _(p):
+    find(p, "Bean Bowl")["flavor_key"] = "tofu | teriyaki"
+    return p, None
+
+
+@case("missing flavor key on a solo meal is a warning", 0, "flavor variety unchecked")
+def _(p):
+    find(p, "Fish Lunch (new)").pop("flavor_key")
+    return p, None
+
+
+@case("variety counts protein preparations, not side combinations", 0, "PASSED")
+def _(p):
+    base = copy.deepcopy(p["days"][0])
+    p["days"] = []
+    for i, dn in enumerate(["Tuesday", "Wednesday", "Thursday", "Friday"]):
+        d = copy.deepcopy(base)
+        d.update(day=dn, date=f"2026-11-{17 + i}")
+        for m in d["meals"]:
+            if m["slot"] == "Dinner" and m["eaters"] == ["James"]:
+                m["new_sides"] = [f"Side {i}"]
+                m["side_ids"] = []
+        p["days"].append(d)
+    return p, None
+
+
+def _three_breakfast_days(p, pin_first, pin_second=False, requested=True):
+    base = copy.deepcopy(p["days"][0])
+    p["days"] = []
+    names = [("Oat Bake", 1), ("Bean Bowl", 2), ("Quick Tofu Stir Fry", 3)]
+    for i, dn in enumerate(["Monday", "Tuesday", "Wednesday"]):
+        d = copy.deepcopy(base)
+        d.update(day=dn, date=f"2026-11-{16 + i}")
+        m = next(x for x in d["meals"] if x["slot"] == "Breakfast" and x["eaters"] == ["Jacob"])
+        n, rid = names[i] if not (pin_second and i == 1) else names[0]
+        m.update(name=n, recipe_id=rid)
+        if (i == 0 and pin_first) or (pin_second and i == 1):
+            m.update(user_requested=requested, user_pinned_single_day=True)
+        p["days"].append(d)
+    return p
+
+
+@case("three breakfast recipes without a pin exceeds the limit", 1, "Variety (Jacob): 3 distinct breakfast")
+def _(p):
+    return _three_breakfast_days(p, False), None
+
+
+@case("a single-day pin is excluded from variety", None, "excluded from variety limits")
+def _(p):
+    return _three_breakfast_days(p, True), None
+
+
+@case("pinned single-day meal really avoids the variety violation", None, "PINCHECK")
+def _(p):
+    return _three_breakfast_days(p, True), None
+
+
+@case("same recipe pinned on two days is a violation", 1, "is pinned on 2 days")
+def _(p):
+    return _three_breakfast_days(p, True, pin_second=True), None
+
+
+@case("pin without user_requested is a violation", 1, "user_requested is not")
+def _(p):
+    return _three_breakfast_days(p, True, requested=False), None
+
+
+def _with_recipe(rid, **fields):
+    rs = copy.deepcopy(RECIPES)
+    next(r for r in rs if r["id"] == rid).update(fields)
+    return rs
+
+
+@case("works_for = No for an eater is a violation", 1, "works_for_jacob = No, but Jacob is eating it")
+def _(p):
+    return p, None, _with_recipe(3, works_for_jacob="No")
+
+
+@case("works_for = Modified is a warning, not a violation", 0, "state Jacob's modification")
+def _(p):
+    return p, None, _with_recipe(3, works_for_jacob="Modified")
+
+
+@case("works_for = No for the other person does not matter for a solo meal", 0, "PASSED")
+def _(p):
+    return p, None, _with_recipe(3, works_for_james="No")
+
+
+@case("shared_meal_safe = No on a shared meal is a violation", 1, "shared_meal_safe = No but is planned as a shared meal")
+def _(p):
+    find(p, "Quick Tofu Stir Fry")["eaters"] = ["Jacob", "James"]
+    find(p, "Quick Tofu Stir Fry")["servings_consumed"] = {"Jacob": 1, "James": 1}
+    meals(p)[:] = [m for m in meals(p) if m["name"] != "Garlic herb salmon"]
+    return p, None, _with_recipe(3, shared_meal_safe="No")
+
+
+@case("missing works_for field in the dump is a warning", 0, "missing from the dump")
+def _(p):
+    rs = copy.deepcopy(RECIPES)
+    next(r for r in rs if r["id"] == 3).pop("works_for_jacob")
+    return p, None, rs
+
+
+@case("person in the plan with no parameter rows is an input error", 2, "has no per-person rows")
+def _(p):
+    p["people"] = ["Jacob", "James", "Sam"]
+    return p, None
+
+
+@case("a new household member with only some rows is an input error", 2, "sam_fiber_max is missing")
+def _(p):
+    return p, params(extra={"key": "sam_fiber_min", "value": "25", "checked_by": "Script"})
+
+
+@case("a new household member with a full set of rows is accepted", 0, "PASSED")
+def _(p):
+    rows = params()
+    for k, v, by in PARAMS:
+        if k.startswith("jacob_"):
+            rows.append({"key": "sam_" + k[len("jacob_"):], "value": v, "checked_by": by})
+    return p, rows
+
+
+@case("new recipe over the fixed quick-dinner time on a quick day", 1, "raw total is 35 min (> 20)")
+def _(p):
+    find(p, "Quick Tofu Stir Fry").update(source="new_web", recipe_id=None, raw_total_minutes=35,
+                                          nutrition_per_serving={"calories": 500, "protein": 25, "fiber": 8})
+    return p, None
+
+
+@case("partial plan skips the household new-recipe minimum", 0, "Partial plan (one person's half)")
+def _(p):
+    p["scope"] = "partial"
+    p["people"] = ["James"]
+    for d in p["days"]:
+        d["meals"] = [m for m in d["meals"] if "James" in m["eaters"]]
+        for m in d["meals"]:
+            if m["source"] == "new_web":
+                m.update(source="database", recipe_id=10, name="Yogurt Bowl", contains_seafood=False,
+                         nutrition_per_serving=None, flavor_key="yogurt | vanilla")
+    return p, None
+
+
+@case("partial plan with a shared meal does not count the other person", 0, "PASSED")
+def _(p):
+    p["scope"] = "partial"
+    p["people"] = ["Jacob"]
+    for d in p["days"]:
+        d["meals"] = [m for m in d["meals"] if "Jacob" in m["eaters"]]
+    find(p, "Quick Tofu Stir Fry").update(eaters=["Jacob", "James"], servings_consumed={"Jacob": 1, "James": 1})
+    return p, None
+
+
 def main():
     failures = 0
     for desc, fn, code, text in CASES:
-        plan, prm = fn(copy.deepcopy(base_plan()))
-        rc, out = run(plan, prm)
-        ok = (code is None or rc == code) and text in out
+        res = fn(copy.deepcopy(base_plan()))
+        plan, prm = res[0], res[1]
+        rc, out = run(plan, prm, recipes=res[2] if len(res) > 2 else None)
+        if text == "PINCHECK":
+            ok = "Variety (Jacob): 3 distinct breakfast" not in out and "Variety (Jacob): 2 distinct breakfast" not in out
+        else:
+            ok = (code is None or rc == code) and text in out
         print(f"{'PASS' if ok else 'FAIL'}  {desc}")
         if not ok:
             failures += 1

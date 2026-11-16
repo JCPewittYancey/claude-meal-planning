@@ -4,7 +4,9 @@
 VERSION is printed on every run so the plan session can report which copy ran.
 
 Usage:
-    python3 validate_plan.py params.json plan.json recipes.json [snack_history.json]
+    python3 validate_plan.py params.json plan.json recipes.json snack_history.json flavor_history.json
+
+All five files are required; pass [] for a history file with no rows.
 
 Exit codes: 0 = passed, 1 = hard-rule violations, 2 = bad input (parameters or files).
 
@@ -21,6 +23,9 @@ script parses the cell text itself so nothing is reinterpreted in transit.
   ...
 ]
 
+People are discovered from the table: anyone with any per-person row ("<name>_fiber_min" and so
+on) is a household member, and every member needs the full set of per-person rows (PERSON_KEYS),
+"none" where unused. Adding someone to the household is a doc edit, not a code change.
 Rules: every key in SCRIPT_SCHEMA must be present and marked Script; a Script
 row whose key this script does not know is an error (the doc is ahead of the
 code); a known key marked Claude is an error. Claude rows are otherwise ignored.
@@ -30,7 +35,10 @@ Values: integers, decimals, comma-separated lists, or "none".
 plan.json: the draft plan.
 {
   "plan_monday": "YYYY-MM-DD",
-  "people": ["Jacob", "James"],
+  "scope": "full",                       # "partial" for one person's half in split planning:
+                                         # people lists only that person; household-wide checks
+                                         # wait for the merged plan (see merge_plans.py)
+  "people": ["PersonA", "PersonB"],
   "quick_dinner_requested_days": [],     # one-off quick days for THIS plan only.
                                          # default_quick_dinner_days come from params.
   "restaurant_lunch_requested_days": [], # one-off restaurant lunches the user asked for
@@ -38,35 +46,54 @@ plan.json: the draft plan.
     {
       "date": "YYYY-MM-DD",
       "day": "Monday",
-      "away": {"James": ["Breakfast", "Lunch", "Snack"]},   # optional: meals missed out of town;
+      "away": {"PersonB": ["Breakfast", "Lunch", "Snack"]},   # optional: meals missed out of town;
                                                             # that person's floors are not enforced that day
-      "fasting_effective_level": {"Jacob": 0, "James": 3},  # 0 = no fast. Apply the olive-oil
-            # exception BEFORE writing this (actual 4 or 5 -> 3). Wine on true level 5 is NOT
-            # captured here; check by hand.
+      "fasting_effective_level": {"PersonA": 0, "PersonB": 3},  # 0 = no fast. Write the level AFTER
+            # applying the household fasting exceptions in the doc. Restrictions an exception does
+            # not lift must be checked by hand.
       "meals": [
         {
           "slot": "Dinner",                  # Breakfast | Lunch | Snack | Dinner
-          "eaters": ["James"],
-          "recipe_id": 12,                   # null for new_web / restaurant / simple / leftovers
-          "name": "Air Fryer Rockfish",
+          "eaters": ["PersonB"],
+          "recipe_id": 12,                   # null for new_web / restaurant / leftovers. For a simple
+                                             # assembly meal: the id of its PROTEIN PREPARATION row
+                                             # (source Assembly, e.g. "Cajun tilapia"); null if new.
+                                             # For assembly meals, "name" is the protein preparation name.
+          "side_ids": [40, 41],              # assembly meals only: ids of existing Side rows
+          "new_sides": ["Roasted zucchini"], # assembly meals only: sides not yet in the database
+          "flavor_key": "tilapia | cajun",   # "protein | flavor profile". Taken from the recipe row when
+                                             # it has one; give it here for new recipes and rows without one.
+                                             # Required for solo meals of flavor_variety_people.
+          "name": "Lemon Garlic Tofu Stir Fry",
           "source": "database",              # database | new_web | restaurant | simple | leftovers
-          "servings_consumed": {"James": 1},
+          "servings_consumed": {"PersonB": 1},
           "multiplier": 0.5,                 # scaling vs base yield; null if n/a
           "eggs_in_recipe": 0,               # eggs in BASE recipe; null/0 if none
           "instant_pot": false,              # true if prep uses the Instant Pot that day (incl. rice)
-          "contains_seafood": true,          # REQUIRED true on any meal with fish, shellfish, or a
-                                             # seafood-derived ingredient (fish sauce, anchovy, ...)
+          "contains_seafood": false,         # REQUIRED true on any meal containing seafood as the
+                                             # household doc defines it
           "fasting_flags": {"1": true, "2": true, "3": false},
-                                             # REQUIRED for new_web and simple meals on fasting days;
-                                             # database recipes use their DB flags
+                                             # REQUIRED for new_web meals and for every assembly meal
+                                             # (whole meal incl. sides) on fasting days; other database
+                                             # recipes use their DB flags
           "raw_prep_minutes": 8,             # new_web only: raw hands-on prep (needed for simple-prep)
           "raw_total_minutes": 25,           # new_web only: raw total (quick dinner, simple-prep)
           "nutrition_per_serving": {"calories": 320, "protein": 30, "fiber": 6},
-                                             # new_web, simple, leftovers. Restaurant calories come
+                                             # new_web, leftovers, and EVERY assembly meal (whole meal at
+                                             # the portions served, protein plus sides). Restaurant calories come
                                              # from the <person>_restaurant_meal_calories parameter.
           "nutrition_estimated": false,
-          "user_requested": false            # true only if the user asked for this recipe this week;
-                                             # overrides recency (reported as a warning)
+          "user_requested": false,           # true only if the user asked for this recipe this week;
+                                             # overrides recency and flavor variety (warnings)
+          "proposal_id": "p1",               # split planning only: marks the first planner's fallback
+                                             # meal for a shared-meal proposal (see merge_plans.py);
+                                             # ignored by this script
+          "user_pinned_single_day": false    # true only when the user said they are having this exact
+                                             # thing for this meal on ONE day ("yogurt for breakfast
+                                             # today"). Excluded from variety limits. Requires
+                                             # user_requested. The same recipe pinned for the same
+                                             # person and slot on 2+ days is a violation. Unpinned
+                                             # uses of the recipe elsewhere still count.
         }
       ]
     }
@@ -75,32 +102,41 @@ plan.json: the draft plan.
 
 ------------------------------------------------------------------------------
 recipes.json: rows for every recipe_id in the plan, joined to the per-person view:
-  SELECT r.id, r.name, r.category, r.last_used, v.last_used_jacob, v.last_used_james,
+  SELECT r.id, r.name, r.category, r.source, r.flavor_key, r.last_used, v.last_used_jacob, v.last_used_james,
          r.times_used, r.rating_jacob, r.rating_james, r.retired, r.notes,
+         r.works_for_jacob, r.works_for_james, r.shared_meal_safe,
          r.batch_cook_or_fresh, r.primary_appliance, r.quick_dinner,
          r.prep_time_minutes, r.cook_time_minutes,
          r.prep_time_minutes_raw, r.cook_time_minutes_raw,
          r.protein_per_serving, r.fiber_per_serving, r.calories_per_serving,
          r.fasting_lvl_1, r.fasting_lvl_2, r.fasting_lvl_3, r.fasting_lvl_4, r.fasting_lvl_5
   FROM recipes r JOIN recipe_last_used_by_person v ON v.recipe_id = r.id
-  WHERE r.id IN (...all recipe_ids in the plan...);
+  WHERE r.id IN (...all recipe_ids AND side_ids in the plan...);
 
-snack_history.json (required when the plan has snacks):
+flavor_history.json: flavor keys eaten by flavor_variety_people in the window:
+  SELECT r.flavor_key, h.week_of, h.person
+  FROM meal_plan_history h JOIN recipes r ON r.id = h.recipe_id
+  WHERE r.flavor_key IS NOT NULL
+  AND h.person IN ([each person in flavor_variety_people], 'Both')
+  AND h.week_of >= '[plan_monday minus recency_days]';
+
+snack_history.json:
   SELECT recipe_id, week_of, person FROM meal_plan_history
   WHERE meal_slot = 'Snack' AND week_of >= '[plan_monday minus recency_days]';
 """
 
 import json
+import re
 import sys
 from datetime import date, timedelta
 
-VERSION = "2.0.0"
+VERSION = "2.7.0"
 
-KNOWN_PEOPLE = ("Jacob", "James")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 MAIN_SLOTS = ("Breakfast", "Lunch", "Dinner")
 NON_RECIPE_SOURCES = ("restaurant", "simple", "leftovers")
 EGG_EPSILON = 0.001
+QUICK_RAW_MAX = 20  # fixed: a new recipe is a quick dinner if its raw total is at most this
 
 # key -> type. Types: int, int_or_none, float, days, people, text
 SCRIPT_SCHEMA = {
@@ -113,7 +149,6 @@ SCRIPT_SCHEMA = {
     "no_breakfast_days": "days",
     "restaurant_lunch_days": "days",
     "default_quick_dinner_days": "days",
-    "quick_dinner_raw_max_minutes": "int",
     "time_buffer_multiplier": "float",
     "instant_pot_max_uses_per_day": "int",
     "seafood_allowed_people": "people",
@@ -121,6 +156,7 @@ SCRIPT_SCHEMA = {
     "simple_prep_people": "people",
     "simple_prep_hands_on_max_minutes": "int",
     "simple_prep_raw_total_max_minutes": "int",
+    "flavor_variety_people": "people",
     "protein_shake_recipe_name": "text",
 }
 PERSON_KEYS = {
@@ -134,9 +170,8 @@ PERSON_KEYS = {
     "protein_shakes_default_per_day": "int_or_none",
     "protein_shakes_max_per_day": "int_or_none",
 }
-for _p in KNOWN_PEOPLE:
-    for _k, _t in PERSON_KEYS.items():
-        SCRIPT_SCHEMA[f"{_p.lower()}_{_k}"] = _t
+PERSON_KEY_RE = re.compile(r"^([a-z][a-z0-9]*)_(" + "|".join(PERSON_KEYS) + r")$")
+KNOWN_PEOPLE = []  # filled from the Parameters table by load_params
 
 
 class InputError(Exception):
@@ -207,6 +242,15 @@ def load_params(path):
         raise InputError("params.json must be a list of {key, value, checked_by} rows.")
     errors = []
     seen = {}
+    found = sorted({m.group(1) for r in rows
+                    for m in [PERSON_KEY_RE.match((r.get("key") or "").strip())] if m})
+    if not found:
+        raise InputError("No household members found: the Parameters table has no <name>_calories_target rows.")
+    KNOWN_PEOPLE[:] = [p.capitalize() for p in found]
+    schema = dict(SCRIPT_SCHEMA)
+    for person in found:
+        for k, ktype in PERSON_KEYS.items():
+            schema[f"{person}_{k}"] = ktype
     for r in rows:
         key = (r.get("key") or "").strip()
         by = (r.get("checked_by") or "").strip().lower()
@@ -217,15 +261,15 @@ def load_params(path):
             errors.append(f"Parameter {key} appears more than once.")
             continue
         seen[key] = (r.get("value"), by)
-        if by == "script" and key not in SCRIPT_SCHEMA:
+        if by == "script" and key not in schema:
             errors.append(
                 f"Parameter {key} is marked Script but this validator (v{VERSION}) does not know it. "
                 "The validator must be updated before this row can be used."
             )
-        if key in SCRIPT_SCHEMA and by != "script":
+        if key in schema and by != "script":
             errors.append(f"Parameter {key} is read by the validator but is marked {by or 'blank'}, not Script.")
     params = {}
-    for key, typ in SCRIPT_SCHEMA.items():
+    for key, typ in schema.items():
         if key not in seen:
             errors.append(f"Parameter {key} is missing from the doc's Parameters table.")
             continue
@@ -235,7 +279,7 @@ def load_params(path):
             errors.append(str(e))
     if errors:
         raise InputError("\n".join(errors))
-    return params
+    return params, schema
 
 
 def parse_date(s):
@@ -270,19 +314,20 @@ def person_target(params, person, key):
 
 
 def main():
-    if len(sys.argv) < 4:
+    if len(sys.argv) < 6:
         print(__doc__)
         sys.exit(2)
     print(f"VALIDATOR v{VERSION}")
     try:
-        P = load_params(sys.argv[1])
+        P, SCHEMA = load_params(sys.argv[1])
         plan = load(sys.argv[2])
         recipes = {r["id"]: r for r in load(sys.argv[3])}
-        snack_history = load(sys.argv[4]) if len(sys.argv) > 4 else []
+        snack_history = load(sys.argv[4])
+        flavor_history = load(sys.argv[5])
         people = plan["people"]
         for p in people:
             if p not in KNOWN_PEOPLE:
-                raise InputError(f"plan.people contains unknown person {p!r}.")
+                raise InputError(f"plan.people contains {p!r}, who has no per-person rows in the Parameters table.")
         plan_monday = parse_date(plan["plan_monday"])
     except InputError as e:
         print("\nINPUT ERROR (nothing was validated):\n")
@@ -293,7 +338,7 @@ def main():
         sys.exit(2)
 
     print("PARAMETERS USED:")
-    for k in SCRIPT_SCHEMA:
+    for k in SCHEMA:
         v = P[k]
         if isinstance(v, set):
             v = ", ".join(sorted(v)) or "none"
@@ -315,6 +360,7 @@ def main():
     shake_name = P["protein_shake_recipe_name"].lower()
 
     variety = {p: {s: set() for s in MAIN_SLOTS} for p in people}
+    pinned_seen = {}  # (person, slot, name) -> [days]
     new_recipes = set()
     day_report = []
     new_snacks_warned = set()
@@ -325,6 +371,24 @@ def main():
             ppl = set(people) if who == "Both" else {who}
             recent_snack.setdefault(h["recipe_id"], set()).update(ppl)
     fallback_warned = set()
+
+    def norm_key(k):
+        if not k:
+            return None
+        parts = [" ".join(x.lower().split()) for x in str(k).split("|")]
+        return " | ".join(parts)
+
+    recent_flavor = {p: {} for p in people}  # person -> {flavor_key: latest week_of}
+    for h in flavor_history:
+        k = norm_key(h.get("flavor_key"))
+        if not k or parse_date(h["week_of"]) < plan_monday - recency:
+            continue
+        who = h.get("person") or "Both"
+        for p in (people if who == "Both" else [who]):
+            if p in recent_flavor:
+                prev = recent_flavor[p].get(k)
+                if prev is None or h["week_of"] > prev:
+                    recent_flavor[p][k] = h["week_of"]
 
     def last_used_for(rec, person):
         key = f"last_used_{person.lower()}"
@@ -353,6 +417,8 @@ def main():
         day_away = {p: bool((day.get("away") or {}).get(p)) for p in people}
 
         def add_nut(p, nut, sv):
+            if p not in day_totals:
+                return  # eater outside this (partial) plan
             day_totals[p]["fiber"] += (nut.get("fiber") or 0) * sv
             day_totals[p]["protein"] += (nut.get("protein") or 0) * sv
             day_totals[p]["calories"] += (nut.get("calories") or 0) * sv
@@ -367,7 +433,7 @@ def main():
             eaters = meal.get("eaters", [])
             servings = meal.get("servings_consumed") or {}
 
-            if src == "database" and rec is None:
+            if rid is not None and rec is None:
                 violations.append(f"{label}: recipe_id {rid} not found in recipes.json dump.")
                 continue
 
@@ -403,6 +469,8 @@ def main():
             # --- Restaurant: calories from parameters ---
             if src == "restaurant":
                 for p in eaters:
+                    if p not in day_totals:
+                        continue
                     day_has_restaurant[p] = True
                     rc = person_target(P, p, "restaurant_meal_calories")
                     if rc is None and person_target(P, p, "calories_target"):
@@ -418,8 +486,20 @@ def main():
                         f"{label}: simple assembly meal served to {', '.join(bad)} "
                         "(only simple_assembly_people may have them)."
                     )
+                if rec is not None and (rec.get("source") or "") != "Assembly":
+                    violations.append(f"{label}: source is simple but recipe {rid} is not an Assembly row.")
                 if not meal.get("nutrition_per_serving"):
-                    warnings.append(f"{label}: simple assembly meal has no nutrition_per_serving.")
+                    warnings.append(f"{label}: assembly meal has no whole-meal nutrition_per_serving; day totals will be wrong.")
+                for sid in meal.get("side_ids") or []:
+                    srec = recipes.get(sid)
+                    if srec is None:
+                        violations.append(f"{label}: side id {sid} not found in recipes.json dump.")
+                    elif srec.get("category") != "Side":
+                        violations.append(f"{label}: side id {sid} ({srec.get('name')}) is not a Side row.")
+                    elif srec.get("retired"):
+                        violations.append(f"{label}: side {srec.get('name')} is retired.")
+                if not (meal.get("side_ids") or meal.get("new_sides")):
+                    warnings.append(f"{label}: assembly meal lists no sides.")
 
             # --- Retired ---
             if rec and rec.get("retired"):
@@ -437,6 +517,27 @@ def main():
                                 f"{label}: {p} last had this {lu}, within {P['recency_days']} days of plan Monday {plan_monday}."
                             )
 
+            # --- Works-for and shared-meal fields ---
+            # "No" = this person cannot eat it as written or modified; "Modified" = it needs a
+            # stated change for them (substitution or split preparation) that the plan notes must show.
+            if rec:
+                for p in eaters:
+                    wf = rec.get(f"works_for_{p.lower()}")
+                    if wf is None or f"works_for_{p.lower()}" not in rec:
+                        warnings.append(f"{label}: works_for_{p.lower()} missing from the dump; not checked for {p}.")
+                    elif wf == "No":
+                        violations.append(f"{label}: recipe is marked works_for_{p.lower()} = No, but {p} is eating it.")
+                    elif wf == "Modified":
+                        warnings.append(f"{label}: works_for_{p.lower()} = Modified; state {p}'s modification in the plan notes and recipe card.")
+                if len(eaters) > 1:
+                    sm = rec.get("shared_meal_safe")
+                    if sm is None or "shared_meal_safe" not in rec:
+                        warnings.append(f"{label}: shared_meal_safe missing from the dump; shared use not checked.")
+                    elif sm == "No":
+                        violations.append(f"{label}: recipe is marked shared_meal_safe = No but is planned as a shared meal.")
+                    elif sm == "Modified":
+                        warnings.append(f"{label}: shared_meal_safe = Modified; state the split preparation in the plan notes and recipe card.")
+
             # --- Ratings ---
             if rec:
                 for p in eaters:
@@ -449,27 +550,53 @@ def main():
                 lvl = int(levels.get(p, 0) or 0)
                 if lvl <= 0:
                     continue
-                if lvl > 3:
-                    warnings.append(
-                        f"{label}: effective level {lvl} passed for {p}; the olive-oil exception should cap "
-                        f"effective levels at 3. Checking fasting_lvl_{lvl} as given."
-                    )
-                flag = rec.get(f"fasting_lvl_{lvl}") if rec else (meal.get("fasting_flags") or {}).get(str(lvl))
+                if rec and src != "simple":
+                    flag = rec.get(f"fasting_lvl_{lvl}")
+                else:
+                    flag = (meal.get("fasting_flags") or {}).get(str(lvl))
                 if flag is None:
                     warnings.append(f"{label}: fasting level {lvl} compliance unknown for {p}.")
                 elif not flag:
                     violations.append(f"{label}: not compliant with {p}'s fasting level {lvl}.")
 
-            # --- Variety (per person, every main slot) ---
-            if slot in MAIN_SLOTS:
+            # --- Flavor variety (solo meals of flavor_variety_people) ---
+            if len(eaters) == 1 and eaters[0] in P["flavor_variety_people"] and slot in MAIN_SLOTS:
+                p = eaters[0]
+                fk = norm_key((rec or {}).get("flavor_key")) or norm_key(meal.get("flavor_key"))
+                if fk is None:
+                    warnings.append(f"{label}: no flavor_key for {p}'s solo meal; flavor variety unchecked.")
+                elif not (rec and is_exempt(rec)):
+                    seen = recent_flavor[p].get(fk)
+                    if seen:
+                        if meal.get("user_requested"):
+                            warnings.append(f"{label}: flavor variety overridden for {p} by explicit user request ({fk}, {seen}).")
+                        else:
+                            violations.append(
+                                f"{label}: {p} had '{fk}' in the week of {seen}, within {P['recency_days']} days "
+                                "(same protein and flavor profile, regardless of sides or method)."
+                            )
+
+            # --- Variety (per person, every main slot; single-day pins excluded) ---
+            if meal.get("user_pinned_single_day"):
+                if not meal.get("user_requested"):
+                    violations.append(
+                        f"{label}: user_pinned_single_day is set but user_requested is not; "
+                        "only meals the user named can be pinned."
+                    )
                 for p in eaters:
-                    variety[p][slot].add(mname)
+                    pinned_seen.setdefault((p, slot, mname), []).append(dname)
+                warnings.append(f"{label}: user-pinned single-day meal; excluded from variety limits (list it in the plan notes).")
+            elif slot in MAIN_SLOTS:
+                for p in eaters:
+                    if p in variety:
+                        variety[p][slot].add(mname)
 
             # --- New-recipe tracking ---
             if slot in MAIN_SLOTS:
                 if src == "new_web":
                     new_recipes.add(mname)
-                elif rec and (rec.get("times_used") or 0) == 0 and rec.get("category") != "Snack":
+                elif (src != "simple" and rec and (rec.get("times_used") or 0) == 0
+                      and rec.get("category") != "Snack"):
                     new_recipes.add(mname)
 
             # --- Snacks ---
@@ -497,7 +624,8 @@ def main():
             rname = (rec.get("name") if rec else mname) or ""
             if rname.lower() == shake_name:
                 for p in eaters:
-                    shakes[p] += servings.get(p, 1)
+                    if p in shakes:
+                        shakes[p] += servings.get(p, 1)
 
             # --- Instant Pot ---
             if meal.get("instant_pot"):
@@ -522,10 +650,10 @@ def main():
                     rt = meal.get("raw_total_minutes")
                     if rt is None:
                         warnings.append(f"{label}: quick dinner required on {dname}; raw_total_minutes not provided.")
-                    elif rt > P["quick_dinner_raw_max_minutes"]:
+                    elif rt > QUICK_RAW_MAX:
                         violations.append(
                             f"{label}: quick dinner required on {dname} but raw total is {rt} min "
-                            f"(> {P['quick_dinner_raw_max_minutes']})."
+                            f"(> {QUICK_RAW_MAX})."
                         )
 
             # --- Simple-prep limits for solo meals ---
@@ -557,7 +685,7 @@ def main():
 
             # --- Nutrition accumulation ---
             nut = meal.get("nutrition_per_serving") or {}
-            if rec and not nut:
+            if rec and not nut and src != "simple":
                 nut = {
                     "protein": rec.get("protein_per_serving"),
                     "fiber": rec.get("fiber_per_serving"),
@@ -623,6 +751,12 @@ def main():
                 violations.append(f"{dname}: {p} fiber {tot['fiber']:.0f}g above maximum {fmax}g.")
 
     # --- Week-level checks ---
+    for (p, slot, mname), days in pinned_seen.items():
+        if len(days) > 1:
+            violations.append(
+                f"Pinned meal '{mname}' ({p}, {slot}) is pinned on {len(days)} days ({', '.join(days)}); "
+                "a single-day pin covers one day only, so it counts toward variety."
+            )
     for p in people:
         for slot in MAIN_SLOTS:
             limit = variety_limits[slot]
@@ -631,7 +765,13 @@ def main():
                 violations.append(
                     f"Variety ({p}): {len(got)} distinct {slot.lower()} recipes ({', '.join(sorted(got))}); max {limit}."
                 )
-    if len(new_recipes) < P["new_recipe_min"]:
+    partial = plan.get("scope", "full") == "partial"
+    if partial:
+        warnings.append(
+            "Partial plan (one person's half): household-wide checks such as the new-recipe minimum, "
+            "and limits shared across both halves (Instant Pot per day), are checked on the merged plan."
+        )
+    elif len(new_recipes) < P["new_recipe_min"]:
         violations.append(
             f"New-recipe minimum: plan has {len(new_recipes)} new recipe(s); at least {P['new_recipe_min']} "
             "breakfast/lunch/dinner recipe must be new from the web or have times_used = 0."
@@ -655,12 +795,8 @@ def main():
         for i, w in enumerate(warnings, 1):
             print(f"  W{i}. {w}")
     print(
-        "\nNOT covered by this script (manual checks): similarity to recently used recipes, "
-        "equipment, disliked ingredients (including James's tuna/oyster/clam exclusions), "
-        "seafood not flagged with contains_seafood, wine on true level 5 days, perishable "
-        "scheduling, lunch-base rotation, breakfast/lunch cooking-session time limits, "
-        "overnight-oats travel conflicts, outing scheduling, and eating-out fasting rules "
-        "other than the ones above."
+        "\nNOT covered by this script: every rule in the household doc without a Script parameter "
+        "(check those by hand), recipe similarity, equipment, and ingredients against both profiles."
     )
     sys.exit(1 if violations else 0)
 

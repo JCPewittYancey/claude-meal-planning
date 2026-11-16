@@ -2,12 +2,13 @@
 
 Validation script for the household meal-planner Claude skill.
 
-The meal-planner skill downloads `validate_plan.py` from this repo at the start of every plan, so a commit here takes effect in the next planning chat (allow a few minutes for GitHub's raw-file cache). Household rules and every number the script uses live in the "Household Meal Planning" Claude Doc, not here. The script refuses to run if the doc's Parameters table and the script disagree on which Script parameters exist.
+The meal-planner skill downloads `validate_plan.py` (and, for split planning, `merge_plans.py`) from this repo at the start of every plan, so a commit here takes effect in the next planning chat (allow a few minutes for GitHub's raw-file cache). Household rules and every number the script uses live in the "Household Meal Planning" Claude Doc, not here. The script refuses to run if the doc's Parameters table and the script disagree on which Script parameters exist.
 
 ## Files
 
 - `validate_plan.py`: the validator. Usage and input formats are in its docstring.
-- `test_validate_plan.py`: regression tests. Run `python3 test_validate_plan.py` before committing a change; every case must pass.
+- `merge_plans.py`: merges two people's half-plans (split planning) into one plan for the validator. Usage and the draft format are in its docstring.
+- `test_validate_plan.py` and `test_merge_plans.py`: regression tests. Run both before committing a change; every case must pass.
 
 ## Changing the script
 
