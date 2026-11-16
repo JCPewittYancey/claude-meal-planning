@@ -61,8 +61,12 @@ plan.json: the draft plan.
                                              # assembly meal: the id of its PROTEIN PREPARATION row
                                              # (source Assembly, e.g. "Cajun tilapia"); null if new.
                                              # For assembly meals, "name" is the protein preparation name.
-          "side_ids": [40, 41],              # assembly meals only: ids of existing Side rows
-          "new_sides": ["Roasted zucchini"], # assembly meals only: sides not yet in the database
+          "side_ids": [40, 41],              # ids of existing Side rows served with this meal. Any meal
+                                             # may carry them (an assembly meal, or a sourced recipe served
+                                             # with plain sides). Every food counted in nutrition_per_serving
+                                             # must be the recipe itself or one of these sides, or it never
+                                             # reaches the grocery list, the PDF, or history.
+          "new_sides": ["Roasted zucchini"], # sides not yet in the database (any meal)
           "flavor_key": "tilapia | cajun",   # "protein | flavor profile". Taken from the recipe row when
                                              # it has one; give it here for new recipes and rows without one.
                                              # Required for solo meals of flavor_variety_people.
@@ -81,8 +85,9 @@ plan.json: the draft plan.
           "raw_prep_minutes": 8,             # new_web only: raw hands-on prep (needed for simple-prep)
           "raw_total_minutes": 25,           # new_web only: raw total (quick dinner, simple-prep)
           "nutrition_per_serving": {"calories": 320, "protein": 30, "fiber": 6},
-                                             # new_web, leftovers, and EVERY assembly meal (whole meal at
-                                             # the portions served, protein plus sides). Restaurant calories come
+                                             # new_web, leftovers, EVERY assembly meal, and any meal with
+                                             # side_ids or new_sides (whole meal at the portions served,
+                                             # main plus sides). Restaurant calories come
                                              # from the <person>_restaurant_meal_calories parameter.
           "nutrition_estimated": false,
           "user_requested": false,           # true only if the user asked for this recipe this week;
@@ -132,7 +137,7 @@ import re
 import sys
 from datetime import date, timedelta
 
-VERSION = "2.8.0"
+VERSION = "2.9.0"
 
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 MAIN_SLOTS = ("Breakfast", "Lunch", "Dinner")
@@ -495,6 +500,11 @@ def main():
                     violations.append(f"{label}: source is simple but recipe {rid} is not an Assembly row.")
                 if not meal.get("nutrition_per_serving"):
                     warnings.append(f"{label}: assembly meal has no whole-meal nutrition_per_serving; day totals will be wrong.")
+                if not (meal.get("side_ids") or meal.get("new_sides")):
+                    warnings.append(f"{label}: assembly meal lists no sides.")
+
+            # --- Sides (any meal: assembly meals and sourced recipes served with plain sides) ---
+            if meal.get("side_ids") or meal.get("new_sides"):
                 for sid in meal.get("side_ids") or []:
                     srec = recipes.get(sid)
                     if srec is None:
@@ -503,8 +513,11 @@ def main():
                         violations.append(f"{label}: side id {sid} ({srec.get('name')}) is not a Side row.")
                     elif srec.get("retired"):
                         violations.append(f"{label}: side {srec.get('name')} is retired.")
-                if not (meal.get("side_ids") or meal.get("new_sides")):
-                    warnings.append(f"{label}: assembly meal lists no sides.")
+                if src != "simple" and not meal.get("nutrition_per_serving"):
+                    violations.append(
+                        f"{label}: meal has sides but no whole-meal nutrition_per_serving; the recipe's own "
+                        "nutrition would leave the sides out of the day totals."
+                    )
 
             # --- Retired ---
             if rec and rec.get("retired"):
