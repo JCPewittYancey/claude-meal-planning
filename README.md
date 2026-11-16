@@ -8,7 +8,13 @@ The meal-planner skill downloads `validate_plan.py` (and, for split planning, `m
 
 - `validate_plan.py`: the validator. Usage and input formats are in its docstring.
 - `merge_plans.py`: merges two people's half-plans (split planning) into one plan for the validator. Usage and the draft format are in its docstring.
-- `test_validate_plan.py` and `test_merge_plans.py`: regression tests. Run both before committing a change; every case must pass.
+- `test_validate_plan.py`, `test_merge_plans.py`, and `tests/test_sides_on_any_meal.py`: regression tests. Run all three from the repo root before committing a change; every case must pass:
+
+  ```
+  python3 test_validate_plan.py
+  python3 test_merge_plans.py
+  python3 tests/test_sides_on_any_meal.py
+  ```
 
 ## Changing the script
 
